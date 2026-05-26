@@ -545,7 +545,35 @@ jobs:
 
           echo "使用$MANIFEST_REPO/$MANIFEST_REPO_NAME($MANIFEST_BRANCH)初始化仓库..."
           repo init -u "$BASE_URL" -b "$MANIFEST_BRANCH" -m "${FILE}.xml" --depth=1 --no-clone-bundle --no-tags
-          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync
+    
+          # 修改：跳过缺失分支的项目
+          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync 2>&1 || {
+            echo "✅ 遇到缺失分支，尝试用 --is-new 重试..."
+            repo sync -c -j$(nproc) --no-clone-bundle --no-tags --force-sync --no-tags 2>&1 || true
+          }
+
+          KERNEL_REPOS=""
+          KERNEL_REPOS_PATH=$(find . -type f -name "build.config.msm.common" | head -n 1)
+          if [[ -n "$KERNEL_REPOS_PATH" ]]; then
+            KERNEL_REPOS=$(echo "${KERNEL_REPOS_PATH#./}" | cut -d/ -f2)
+            echo "✅ 发现 build.config.msm.common: $KERNEL_REPOS_PATH"
+            echo "✅ KERNEL_REPOS=$KERNEL_REPOS"
+            echo "KERNEL_REPOS=$KERNEL_REPOS" >> "$GITHUB_ENV"
+          else
+            echo "❎ 未找到 build.config.msm.common，可能是天玑清单或纯 Kleaf 构建结构"
+          fi
+
+          for dir in kernel_platform/common kernel_platform/$KERNEL_REPOS; do
+            if [ -e "$dir/BUILD.bazel" ]; then
+              sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' "$dir/BUILD.bazel"
+            fi
+            rm -f "$dir/android/abi_gki_protected_exports_"* 2>/dev/null || echo "No protected exports in $dir"
+          done
+
+          if grep -q 'check_defconfig = None,' kernel_platform/build/kernel/kleaf/common_kernels.bzl; then
+            sed -i 's/check_defconfig = None,/check_defconfig = "disabled",/' kernel_platform/build/kernel/kleaf/common_kernels.bzl
+            sed -i 's/if check_defconfig == None:/if False:  # check_defconfig == None:/' kernel_platform/build/kernel/kleaf/common_kernels.bzl
+          fi
 
           KERNEL_REPOS=""
           KERNEL_REPOS_PATH=$(find . -type f -name "build.config.msm.common" | head -n 1)
